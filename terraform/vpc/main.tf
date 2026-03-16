@@ -59,3 +59,49 @@ module "vpc" {
     }
   )
 }
+
+# -----------------------------------------------------------------------------
+# VPC Endpoints: S3 / ECR → NAT Gateway 우회 (비용 절감)
+# -----------------------------------------------------------------------------
+# - S3 Gateway: 무료. S3 접근 + ECR 이미지 레이어 풀에 사용
+# - ECR API/DKR: Interface 엔드포인트. ecr get-login, docker pull 시 NAT 미경유
+# -----------------------------------------------------------------------------
+
+module "vpc_endpoints" {
+  source  = "terraform-aws-modules/vpc/aws//modules/vpc-endpoints"
+  version = "6.6.0"
+
+  vpc_id               = module.vpc.vpc_id
+  create_security_group = true # Interface 엔드포인트용 SG 자동 생성 (VPC CIDR → 443 허용)
+
+  endpoints = {
+    # S3: Gateway (무료). Private RT에 라우트 추가 → S3 트래픽이 NAT 대신 엔드포인트로
+    s3 = {
+      service         = "s3"
+      service_type    = "Gateway"
+      route_table_ids = module.vpc.private_route_table_ids
+      tags            = { Name = "${local.vpc_name}-s3" }
+    }
+
+    # ECR API: ecr get-login, describe 등 API 호출
+    ecr_api = {
+      service            = "ecr.api"
+      private_dns_enabled = true
+      subnet_ids         = module.vpc.private_subnets
+      tags               = { Name = "${local.vpc_name}-ecr-api" }
+    }
+
+    # ECR DKR: Docker registry API (이미지 메타데이터). 레이어 데이터는 S3 Gateway로
+    ecr_dkr = {
+      service            = "ecr.dkr"
+      private_dns_enabled = true
+      subnet_ids         = module.vpc.private_subnets
+      tags               = { Name = "${local.vpc_name}-ecr-dkr" }
+    }
+  }
+
+  tags = merge(
+    data.terraform_remote_state.env.outputs.default_tags,
+    { Name = "${local.vpc_name}-endpoints" }
+  )
+}
