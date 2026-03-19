@@ -1,4 +1,4 @@
-# example-eks-infra
+# eks-terraform-infra
 
 ## 개요
 
